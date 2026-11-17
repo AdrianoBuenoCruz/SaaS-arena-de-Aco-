@@ -1,0 +1,8 @@
+<?php
+// Integração de assinatura via Asaas. Configure asaas_token em config.php.
+require __DIR__.'/bootstrap.php'; $u=require_login();$code=$_POST['plan']??'basic';
+if(empty($cfg['asaas_token'])) exit('Configure a chave API do Asaas em config.php antes de cobrar.');
+$p=$pdo->prepare('SELECT * FROM plans WHERE code=?');$p->execute([$code]);$plan=$p->fetch();if(!$plan)exit('Plano inválido.');
+$base=$cfg['asaas_sandbox']?'https://sandbox.asaas.com/api/v3':'https://api.asaas.com/v3';
+function asaas(string $url,array $data,string $token):array{$c=curl_init($url);curl_setopt_array($c,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_POST=>true,CURLOPT_HTTPHEADER=>['Content-Type: application/json','access_token: '.$token],CURLOPT_POSTFIELDS=>json_encode($data)]);$r=curl_exec($c);$code=curl_getinfo($c,CURLINFO_HTTP_CODE);curl_close($c);if($code>=300)throw new RuntimeException($r?:'Falha na Asaas');return json_decode($r,true);}
+try{$customer=asaas($base.'/customers',['name'=>$u['name'],'email'=>$u['email']],$cfg['asaas_token']);$sub=asaas($base.'/subscriptions',['customer'=>$customer['id'],'billingType'=>'UNDEFINED','value'=>(float)$plan['monthly_price'],'nextDueDate'=>date('Y-m-d',strtotime('+7 days')),'cycle'=>'MONTHLY','description'=>'Arena de Aço — '.$plan['name']],$cfg['asaas_token']);$pdo->prepare('INSERT INTO subscriptions(user_id,plan_id,asaas_customer_id,asaas_subscription_id,status,trial_ends_at) VALUES(?,?,?,?,"trial",DATE_ADD(NOW(),INTERVAL 7 DAY))')->execute([$u['id'],$plan['id'],$customer['id'],$sub['id']]);header('Location: conta.php');}catch(Throwable $e){http_response_code(502);echo 'Não foi possível iniciar cobrança. Verifique token e Asaas.';}
